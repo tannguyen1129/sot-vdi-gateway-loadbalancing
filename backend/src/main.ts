@@ -1,6 +1,7 @@
+require('dotenv').config();
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { EventEmitter } from 'events'; // Dùng để tạo Server giả
+import * as crypto from 'crypto';
 const GuacamoleLite = require('guacamole-lite');
 
 async function bootstrap() {
@@ -13,88 +14,89 @@ async function bootstrap() {
     credentials: true,
   });
 
-  await app.listen(3000);
   const server = app.getHttpServer();
-  
-  console.log('✅ VDI Backend running on port 3000');
 
-  // Cấu hình Node Worker
-  const guacdNodes = [
-    { host: '101.47.159.90', port: 4822 }, // guaclite0
-    { host: '101.47.159.85', port: 4822 }, // guaclite1
-    { host: '101.47.159.88', port: 4822 }, // guaclite2
-  ];
-
+  // 1. Lấy cấu hình Worker (từ docker-compose)
+  const GUACD_HOST = process.env.GUACD_HOST || '127.0.0.1';
+  const GUACD_PORT = 4822;
   const GUAC_KEY = process.env.GUAC_CRYPT_KEY || 'MySuperSecretKeyForEncryption123';
-  console.log(`🔐 Using Encryption Key: ${GUAC_KEY === 'MySuperSecretKeyForEncryption123' ? 'Default' : 'Custom ENV'}`);
 
+  console.log(`✅ VDI Node Started. Target: ${GUACD_HOST}`);
+
+  // 2. Tắt mã hóa thư viện để ta tự xử lý (Chống lỗi Crash)
   const clientOptions = {
-    crypt: { cypher: 'AES-256-CBC', key: GUAC_KEY },
-    log: { level: 'DEBUG' },
+    crypt: null, 
+    log: { level: 'DEBUG' }
   };
 
+  // 3. Hàm giải mã Token (Chống lỗi Double Token)
+  const decryptToken = (tokenInput: any) => {
+    try {
+      // [FIX CRASH] Nếu token là mảng, lấy cái đầu tiên
+      let tokenStr = tokenInput;
+      if (Array.isArray(tokenInput)) {
+        console.warn('⚠️ Detected Double Token, auto-fixing...');
+        tokenStr = tokenInput[0];
+      }
+
+      if (!tokenStr) throw new Error('Empty token');
+
+      // Giải mã
+      const jsonStr = Buffer.from(tokenStr, 'base64').toString('utf8');
+      const payload = JSON.parse(jsonStr);
+      
+      const iv = Buffer.from(payload.iv, 'base64');
+      const encryptedText = Buffer.from(payload.value, 'base64');
+      
+      const decipher = crypto.createDecipheriv('aes-256-cbc', GUAC_KEY, iv);
+      let decrypted = decipher.update(encryptedText);
+      decrypted = Buffer.concat([decrypted, decipher.final()]);
+      
+      return JSON.parse(decrypted.toString());
+    } catch (e) {
+      console.error(`❌ Decrypt Error: ${e.message}`);
+      return null;
+    }
+  };
+
+  // 4. Callback
   const guacCallbacks = {
     processConnectionSettings: function (settings, callback) {
-      if (!settings || !settings.connection) return callback(new Error('Missing settings'));
-      try {
-         const connection = settings.connection;
-         const targetSettings = connection.settings ? connection.settings : connection;
-         
-         const normalizeDimension = (value: unknown) => {
-            const n = Number(value);
-            if (!Number.isFinite(n)) return undefined;
-            return Math.max(100, Math.floor(n));
-         };
-
-         if (settings.width) targetSettings.width = normalizeDimension(settings.width) || 1024;
-         if (settings.height) targetSettings.height = normalizeDimension(settings.height) || 768;
-         if (settings.dpi) targetSettings.dpi = Math.round(Number(settings.dpi));
-
-         console.log(`🎯 Target VM: ${targetSettings.hostname} (${targetSettings.width}x${targetSettings.height})`); 
-         callback(null, settings);
-      } catch (e) {
-         callback(e);
+      // Tự giải mã
+      const decrypted = decryptToken(settings.token);
+      if (!decrypted) {
+        return callback(new Error('Token validation failed'));
       }
+
+      // Lấy thông tin kết nối
+      const connection = decrypted.connection;
+      const targetSettings = connection.settings || connection;
+      
+      // Fix màn hình
+      const normalizeDimension = (value) => {
+          const n = Number(value);
+          return Number.isFinite(n) ? Math.max(100, Math.floor(n)) : undefined;
+      };
+
+      if (settings.width) targetSettings.width = normalizeDimension(settings.width);
+      if (settings.height) targetSettings.height = normalizeDimension(settings.height);
+      if (settings.dpi) targetSettings.dpi = Number(settings.dpi);
+
+      console.log(`🎯 [Connected] VM: ${targetSettings.hostname}`);
+      
+      // Trả về settings đã giải mã
+      callback(null, decrypted);
     }
   };
 
-  // --- [FIX LOGIC] DÙNG DUMMY SERVER ĐỂ TRÁNH CRASH ---
-  const guacInstances = guacdNodes.map((node, index) => {
-    // 1. Tạo một Server giả (EventEmitter) để lừa GuacamoleLite
-    const dummyServer = new EventEmitter();
-    
-    // 2. Khởi tạo Guacamole gắn vào Server giả này
-    const guac = new GuacamoleLite(
-      { server: dummyServer, path: `/guaclite${index}` }, // Path chuẩn
-      node,
-      clientOptions,
-      guacCallbacks
-    );
+  // 5. Khởi tạo (Path chung /guaclite để Nginx rewrite vào)
+  new GuacamoleLite(
+    { server, path: '/guaclite' }, 
+    { host: GUACD_HOST, port: GUACD_PORT }, 
+    clientOptions, 
+    guacCallbacks
+  );
 
-    return { guac, dummyServer, path: `/guaclite${index}` };
-  });
-
-  // --- [MANUAL ROUTING] TỰ ĐIỀU HƯỚNG REQUEST ---
-  server.on('upgrade', (request, socket, head) => {
-    const url = request.url;
-    // Cắt bỏ query string (?token=...) để lấy path sạch
-    const pathname = url.split('?')[0]; 
-
-    // Tìm worker phù hợp
-    const target = guacInstances.find(g => g.path === pathname);
-
-    if (target) {
-      console.log(`✅ Routing ${pathname} -> Worker`);
-      
-      // [QUAN TRỌNG] Sửa lại URL của request thành path sạch
-      // Để thư viện ws bên trong Guacamole khớp path
-      request.url = pathname; 
-
-      // Phát sự kiện 'upgrade' vào Server giả -> Guacamole sẽ bắt được
-      target.dummyServer.emit('upgrade', request, socket, head);
-    } else {
-      // socket.destroy(); // Không khớp thì hủy (hoặc kệ cho Next.js xử lý)
-    }
-  });
+  await app.listen(3000);
 }
 bootstrap();

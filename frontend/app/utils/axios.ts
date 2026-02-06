@@ -7,10 +7,10 @@ const api = axios.create({
   },
 });
 
-// --- [THÊM ĐOẠN NÀY] INTERCEPTOR TỰ ĐỘNG GẮN TOKEN ---
+// --- [BẮT BUỘC PHẢI CÓ ĐOẠN NÀY] ---
+// Nếu thiếu đoạn này, mọi request nộp bài sẽ bị 401
 api.interceptors.request.use(
   (config) => {
-    // Luôn luôn lấy token mới nhất từ kho
     if (typeof window !== 'undefined') {
       const token = localStorage.getItem('accessToken');
       if (token) {
@@ -21,6 +21,6 @@ api.interceptors.request.use(
   },
   (error) => Promise.reject(error)
 );
-// -----------------------------------------------------
+// ------------------------------------
 
 export default api;

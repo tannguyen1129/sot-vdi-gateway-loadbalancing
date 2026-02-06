@@ -9,11 +9,11 @@ import { MonitoringService } from './monitoring.service';
 
 @Controller('monitoring')
 export class MonitoringController {
-  monitoringService: any;
   constructor(
     @InjectRepository(ExamLog) private logRepo: Repository<ExamLog>,
     @InjectRepository(User) private userRepo: Repository<User>,
     @InjectRepository(Vm) private vmRepo: Repository<Vm>,
+    private monitoringService: MonitoringService,
   ) {}
 
   // 1. Ghi Log (Giữ nguyên)
@@ -88,6 +88,7 @@ export class MonitoringController {
   // 4. Lấy full logs để export Excel
   @Get(':examId/all')
   async getAllLogs(@Param('examId') examId: string) {
+    // Giờ biến này mới có giá trị
     return this.monitoringService.getLogsByExam(+examId);
   }
 
