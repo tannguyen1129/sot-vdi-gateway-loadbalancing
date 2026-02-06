@@ -34,7 +34,8 @@ async function bootstrap() {
       cypher: 'AES-256-CBC',
       key: GUAC_KEY,
     },
-    log: { level: 'INFO' },
+    // [FIX] Đổi level log lên DEBUG để xem chi tiết lỗi
+    log: { level: 'DEBUG' }, 
     maxInactivityTime: 0
   };
 

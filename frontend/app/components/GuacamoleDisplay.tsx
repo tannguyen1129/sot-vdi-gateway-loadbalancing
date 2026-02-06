@@ -154,18 +154,26 @@ export default function GuacamoleDisplay({ token, wsPath, isLocked = false, onAc
     let cleanupFn = () => {};
 
     const connect = () => {
+      // Ngắt kết nối cũ nếu có
       if (clientRef.current) { try { clientRef.current.disconnect(); } catch {} }
       if (displayMountRef.current) displayMountRef.current.innerHTML = "";
 
       setStatus("CONNECTING...");
 
-      const tunnel = new (Guacamole as any).WebSocketTunnel(buildWsCandidates(wsPath || '/guaclite')[0]);
+      const encodedToken = encodeURIComponent(token);
+
+      const wsUrlStr = buildWsCandidates(wsPath || '/guaclite')[0];
+      const wsUrlWithToken = wsUrlStr + (wsUrlStr.includes('?') ? '&' : '?') + `token=${encodedToken}`;
+
+      // Khởi tạo Tunnel với URL đã có token
+      const tunnel = new (Guacamole as any).WebSocketTunnel(wsUrlWithToken);
       const client = new (Guacamole as any).Client(tunnel);
       clientRef.current = client;
 
       client.onerror = (error: any) => {
          console.error("Guac Client Error:", error);
-         setStatus(`ERROR: ${error.message || 'Unknown'}`);
+         // Hiển thị lỗi chi tiết hơn
+         setStatus(`ERROR: ${error.message || error.code || 'Unknown'}`);
       };
 
       client.onstatechange = (state: number) => {
@@ -175,7 +183,7 @@ export default function GuacamoleDisplay({ token, wsPath, isLocked = false, onAc
          
          if (state === 3) {
              setStatus("CONNECTED");
-             // Gửi size màn hình ngay lập tức khi kết nối
+             // Gửi size màn hình ngay lập tức khi kết nối thành công
              if (containerRef.current) {
                  const rect = containerRef.current.getBoundingClientRect();
                  const w = Math.floor(rect.width);
@@ -230,13 +238,14 @@ export default function GuacamoleDisplay({ token, wsPath, isLocked = false, onAc
           }
       };
 
-      // Connect Params
+      // Connect Params (Handshake)
+      // Lưu ý: Token đã gửi ở URL Tunnel, nhưng gửi lại ở đây cũng không sao
       const rect = containerRef.current!.getBoundingClientRect();
       const width = Math.floor(rect.width);
       const height = Math.floor(rect.height);
 
       const params = new URLSearchParams({
-        token,
+        token, // Vẫn giữ ở đây để đúng chuẩn protocol handshake
         width: String(width),
         height: String(height),
         dpi: "96" 
@@ -253,7 +262,7 @@ export default function GuacamoleDisplay({ token, wsPath, isLocked = false, onAc
     connect();
 
     return () => { cleanupFn(); };
-  }, [token, hasDimensions, wsPath]); 
+  }, [token, hasDimensions, wsPath]);
 
   // --- 4. RENDER ---
   return (

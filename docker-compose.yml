@@ -8,13 +8,25 @@ services:
     restart: always
     ports:
       - "80:80"
+      - "443:443" # Mở thêm port HTTPS
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # Mount thư mục để Nginx đọc được chứng chỉ SSL
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
     depends_on:
       - frontend
       - backend
     networks:
       - vdi_net
+
+  # Thêm service Certbot để tự động lấy/gia hạn SSL
+  certbot:
+    image: certbot/certbot
+    container_name: umt_certbot
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
 
   # [QUAN TRỌNG]: ĐÃ XÓA SERVICE 'guacd' Ở ĐÂY
   # Vì guacd giờ đang chạy trên 3 con VPS Worker (101.47.159.90, 85, 88)
