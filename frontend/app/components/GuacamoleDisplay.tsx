@@ -128,7 +128,7 @@ export default function GuacamoleDisplay({ token, wsPath, isLocked = false, onAc
                right: (e.buttons & 2) === 2,
                up: false, 
                down: false
-           });
+            });
         } catch {}
     };
 

@@ -42,6 +42,8 @@ services:
     build: ./backend
     container_name: umt_backend
     restart: always
+    environment:
+      - GUAC_CRYPT_KEY=MySuperSecretKeyForEncryption123
     env_file:
       - .env
     # ports:
